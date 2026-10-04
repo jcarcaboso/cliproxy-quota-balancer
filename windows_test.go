@@ -77,6 +77,28 @@ func TestWeeklyAndFiveHourResetOrdering(t *testing.T) {
 	}
 }
 
+func TestClaudeWeeklyResetWins(t *testing.T) {
+	claude := pluginapi.SchedulerAuthCandidate{
+		ID: "claude-weekly", Provider: "claude",
+		Quota: pluginapi.SchedulerQuotaSnapshot{
+			ObservedAt: testNow,
+			Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-5h-Utilization": "0.5",
+				"Anthropic-Ratelimit-Unified-5h-Reset":       strconv.FormatInt(testNow.Add(3*time.Hour).Unix(), 10),
+				"Anthropic-Ratelimit-Unified-7d-Utilization": "0.95",
+				"Anthropic-Ratelimit-Unified-7d-Reset":       strconv.FormatInt(testNow.Add(15*time.Minute).Unix(), 10),
+			},
+		},
+	}
+	var cursor atomic.Uint64
+	got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{
+		codexCandidate("codex-five-hour", "50", 30*time.Minute), claude,
+	}, testNow, &cursor, defaultConfig())
+	if got.AuthID != claude.ID {
+		t.Fatalf("Claude weekly pick = %#v", got)
+	}
+}
+
 func TestConfigurableThresholds(t *testing.T) {
 	tests := []struct {
 		reserve float64

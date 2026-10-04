@@ -22,3 +22,4 @@ jobs:
       - run: |
           docker build -t quota-balancer:test .
           docker run --rm --entrypoint /usr/local/bin/verify-quota-balancer quota-balancer:test -plugin-dir /CLIProxyAPI/plugins
+          docker run --rm --entrypoint /usr/local/bin/e2e-quota-balancer quota-balancer:test

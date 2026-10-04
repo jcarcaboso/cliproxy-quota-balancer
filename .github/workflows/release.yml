@@ -31,11 +31,13 @@ jobs:
         with:
           context: .
           load: true
+          build-args: PLUGIN_COMMIT=${{ github.sha }}
           tags: skorcius/cliproxy-quota-balancer:${{ github.ref_name }}
       - name: Verify the image then push
         run: |
           image="skorcius/cliproxy-quota-balancer:${GITHUB_REF_NAME}"
           docker run --rm --entrypoint /usr/local/bin/verify-quota-balancer "$image" -plugin-dir /CLIProxyAPI/plugins
+          docker run --rm --entrypoint /usr/local/bin/e2e-quota-balancer "$image"
           docker push "$image" | tee dist/image-push.txt
       - name: Publish release assets
         env:

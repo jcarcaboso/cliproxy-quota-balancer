@@ -84,6 +84,11 @@ picks, and hot reconfiguration. These use synthetic quota data, not live
 credentials or billable provider requests.
 
 CI runs the same tests and builds and verifies the combined container.
+The container also runs real `/v1/responses` HTTP requests, both streaming and
+non-streaming, against a local fake Codex upstream. It seeds two accounts with
+different observed quotas and checks which credential actually reaches the
+upstream. This covers the full proxy-to-plugin path, weekly versus five-hour
+ordering, reserve release, exhaustion, and rejection without upstream traffic.
 
 ## Install the plugin
 
