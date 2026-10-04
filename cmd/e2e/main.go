@@ -53,15 +53,17 @@ func run(server, plugins string) error {
 		{"all reserved pool rejects without upstream request", accountQuota{95, 50, 2 * time.Hour, 48 * time.Hour}, accountQuota{95, 50, 3 * time.Hour, 48 * time.Hour}, ""},
 	}
 	for _, test := range tests {
-		if errTest := scenario(server, plugins, test.a, test.b, test.want); errTest != nil {
-			return fmt.Errorf("%s: %w", test.name, errTest)
+		for _, affinity := range []bool{false, true} {
+			if errTest := scenario(server, plugins, test.a, test.b, test.want, affinity); errTest != nil {
+				return fmt.Errorf("%s affinity=%v: %w", test.name, affinity, errTest)
+			}
 		}
 		fmt.Println("PASS HTTP:", test.name)
 	}
 	return nil
 }
 
-func scenario(server, plugins string, a, b accountQuota, want string) error {
+func scenario(server, plugins string, a, b accountQuota, want string, affinity bool) error {
 	now := time.Now()
 	var mutex sync.Mutex
 	var selected []string
@@ -122,6 +124,7 @@ func scenario(server, plugins string, a, b accountQuota, want string) error {
 		"access":         map[string]any{"api-keys": []string{"synthetic-client"}},
 		"oauth":          map[string]any{"auth-dir": filepath.Join(directory, "auth")},
 		"api-keys":       map[string]any{"codex": groups},
+		"routing":        map[string]any{"session-affinity": affinity},
 		"plugins": map[string]any{
 			"enabled": true, "dir": plugins,
 			"configs": map[string]any{"quota-balancer": map[string]any{

@@ -43,6 +43,8 @@ The host applies credential eligibility, cooldowns, model support, pinned
 accounts and priority tiers first. Use equal credential priorities if all
 accounts should compete. Give this plugin a higher plugin priority than other
 scheduler plugins. Remote CLIProxyAPIHome account selection is outside its scope.
+The scheduler runs before the built-in session-affinity selector, so quota policy
+can switch accounts within a session. Explicitly pinned accounts remain pinned.
 
 ## Observations and limitations
 
