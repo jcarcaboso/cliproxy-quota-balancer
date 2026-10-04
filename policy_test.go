@@ -242,6 +242,10 @@ func TestPluginLifecycleAndStrategies(t *testing.T) {
 			!registration.Capabilities["scheduler"] {
 			t.Fatalf("registration is missing host-required fields: %#v", registration)
 		}
+		if registration.Metadata.Author != "jcarcaboso" ||
+			registration.Metadata.GitHubRepository != "https://github.com/jcarcaboso/cliproxy-quota-balancer" {
+			t.Fatal("plugin metadata must identify its own published repository")
+		}
 		raw, errPick := handleMethod(pluginabi.MethodSchedulerPick, []byte(`{"Candidates":[]}`))
 		if errPick != nil {
 			t.Fatal(errPick)

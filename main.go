@@ -172,9 +172,9 @@ func pluginRegistration() any {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "quota-balancer",
-			Version:          "0.1.0",
-			Author:           "router-for-me",
-			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
+			Version:          "0.1.1",
+			Author:           "jcarcaboso",
+			GitHubRepository: "https://github.com/jcarcaboso/cliproxy-quota-balancer",
 			ConfigFields: []pluginapi.ConfigField{{
 				Name:        "strategy",
 				Type:        pluginapi.ConfigFieldTypeEnum,
