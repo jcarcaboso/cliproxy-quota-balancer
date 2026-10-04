@@ -1,0 +1,24 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -cover ./...
+      - run: |
+          mkdir -p dist
+          go build -buildmode=c-shared -o dist/quota-balancer.so .
+          go run ./cmd/verify -plugin-dir "$PWD/dist"
+      - run: |
+          docker build -t quota-balancer:test .
+          docker run --rm --entrypoint /usr/local/bin/verify-quota-balancer quota-balancer:test -plugin-dir /CLIProxyAPI/plugins

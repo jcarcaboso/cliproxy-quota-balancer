@@ -1,0 +1,5 @@
+enabled: true
+priority: 100
+strategy: earliest-reset
+reserve-percent: 10
+release-within: 1h

@@ -1,0 +1,46 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - name: Build and verify Linux x86_64 plugin
+        run: |
+          mkdir -p dist
+          go build -buildmode=c-shared -o dist/quota-balancer.so .
+          go run ./cmd/verify -plugin-dir "$PWD/dist"
+          cd dist
+          sha256sum quota-balancer.so > SHA256SUMS
+          tar -czf quota-balancer-linux-amd64.tar.gz quota-balancer.so SHA256SUMS
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build the exact image that will be published
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          tags: skorcius/cliproxy-quota-balancer:${{ github.ref_name }}
+      - name: Verify the image then push
+        run: |
+          image="skorcius/cliproxy-quota-balancer:${GITHUB_REF_NAME}"
+          docker run --rm --entrypoint /usr/local/bin/verify-quota-balancer "$image" -plugin-dir /CLIProxyAPI/plugins
+          docker push "$image" | tee dist/image-push.txt
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/quota-balancer-linux-amd64.tar.gz dist/SHA256SUMS dist/image-push.txt \
+            --title "Quota balancer $GITHUB_REF_NAME" --generate-notes
