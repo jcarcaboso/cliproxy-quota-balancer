@@ -172,7 +172,7 @@ func pluginRegistration() any {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "quota-balancer",
-			Version:          "0.1.1",
+			Version:          "0.1.2",
 			Author:           "jcarcaboso",
 			GitHubRepository: "https://github.com/jcarcaboso/cliproxy-quota-balancer",
 			ConfigFields: []pluginapi.ConfigField{{
@@ -182,10 +182,10 @@ func pluginRegistration() any {
 				Description: "Prefer the account whose five-hour or weekly quota resets soonest; other strategies use built-in routing.",
 			}, {
 				Name: "reserve-percent", Type: pluginapi.ConfigFieldTypeNumber,
-				Description: "Remaining quota percentage to preserve in each window until release-within. Default 10; zero disables the reserve.",
+				Description: "Remaining quota percentage to preserve while alternatives are available. Default 10; zero disables the reserve.",
 			}, {
 				Name: "release-within", Type: pluginapi.ConfigFieldTypeString,
-				Description: "Release a window's reserve when its reset is this close. Default 1h; zero keeps the reserve until reset.",
+				Description: "Release a window's reserve when its reset is this close. Default 1h; zero holds it until reset unless only reserved accounts remain.",
 			}},
 		},
 		Capabilities: map[string]bool{"scheduler": true},

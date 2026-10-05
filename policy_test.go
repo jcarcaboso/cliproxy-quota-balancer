@@ -68,9 +68,9 @@ func TestPickQuotaAuth(t *testing.T) {
 			wantID:     "urgent",
 		},
 		{
-			name:       "reserve held one second before release",
-			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("reserved", "90", time.Hour+time.Second)},
-			reject:     true,
+			name:       "reserve held one second before release when another account is available",
+			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("reserved", "90", time.Hour+time.Second), codexCandidate("available", "50", 3*time.Hour)},
+			wantID:     "available",
 		},
 		{
 			name:       "exhausted quota is not usable even near reset",
@@ -78,13 +78,28 @@ func TestPickQuotaAuth(t *testing.T) {
 			wantID:     "later",
 		},
 		{
-			name:       "all accounts reserved",
-			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("a", "90", 2*time.Hour), codexCandidate("b", "95", 3*time.Hour)},
-			reject:     true,
+			name:       "all accounts reserved falls back to earliest reset",
+			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("later", "90", 3*time.Hour), codexCandidate("soon", "95", 2*time.Hour)},
+			wantID:     "soon",
 		},
 		{
-			name:       "single reserved account does not bypass policy",
+			name:       "single reserved account remains usable",
 			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("only", "90", 2*time.Hour)},
+			wantID:     "only",
+		},
+		{
+			name:       "reserved reset ties resolved by stable account id",
+			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("b", "95", 2*time.Hour), codexCandidate("a", "99", 2*time.Hour)},
+			wantID:     "a",
+		},
+		{
+			name:       "reserved account preferred over exhausted account",
+			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("empty", "100", 30*time.Minute), codexCandidate("reserved", "95", 2*time.Hour)},
+			wantID:     "reserved",
+		},
+		{
+			name:       "all accounts exhausted",
+			candidates: []pluginapi.SchedulerAuthCandidate{codexCandidate("a", "100", 30*time.Minute), codexCandidate("b", "100", 2*time.Hour)},
 			reject:     true,
 		},
 		{
@@ -117,6 +132,31 @@ func TestPickQuotaAuth(t *testing.T) {
 				t.Fatalf("pick = %#v, want auth %q, reject %v", got, tt.wantID, tt.reject)
 			}
 		})
+	}
+}
+
+func TestReservedQuotaFallbackFailover(t *testing.T) {
+	fiveHour := codexCandidate("five-hour", "95", 2*time.Hour)
+	weekly := codexCandidate("weekly-only", "95", 24*time.Hour)
+	weekly.Quota.Signals["X-Codex-Primary-Window-Minutes"] = "10080"
+	for _, tt := range []struct {
+		shortUsed, weeklyUsed string
+		wantID                string
+		reject                bool
+	}{
+		{"95", "95", "five-hour", false},
+		{"100", "95", "weekly-only", false},
+		{"100", "100", "", true},
+	} {
+		fiveHour.Quota.Signals["X-Codex-Primary-Used-Percent"] = tt.shortUsed
+		weekly.Quota.Signals["X-Codex-Primary-Used-Percent"] = tt.weeklyUsed
+		for _, candidates := range [][]pluginapi.SchedulerAuthCandidate{{fiveHour, weekly}, {weekly, fiveHour}} {
+			var cursor atomic.Uint64
+			got := pickQuotaAuth(candidates, testNow, &cursor, defaultConfig())
+			if !got.Handled || got.AuthID != tt.wantID || got.Reject != tt.reject {
+				t.Fatalf("five-hour used=%s weekly used=%s: pick=%#v, want auth %q reject %v", tt.shortUsed, tt.weeklyUsed, got, tt.wantID, tt.reject)
+			}
+		}
 	}
 }
 
@@ -172,11 +212,18 @@ func TestCandidateWindowClaude(t *testing.T) {
 	if got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{candidate}, testNow, &cursor, defaultConfig()); got.AuthID != "claude" {
 		t.Fatalf("final-hour Claude pick = %#v", got)
 	}
+	candidate.Quota.Signals["Anthropic-Ratelimit-Unified-5h-Reset"] = strconv.FormatInt(testNow.Add(2*time.Hour).Unix(), 10)
+	if got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{candidate}, testNow, &cursor, defaultConfig()); got.AuthID != "claude" || got.Reject {
+		t.Fatalf("reserved Claude fallback pick = %#v", got)
+	}
 	candidate.Quota.Signals["Anthropic-Ratelimit-Unified-7d-Reset"] = strconv.FormatInt(testNow.Add(24*time.Hour).Unix(), 10)
 	candidate.Quota.Signals["Anthropic-Ratelimit-Unified-7d-Status"] = "rejected"
 	_, exhausted = candidateWindows(candidate, testNow)
 	if !exhausted {
 		t.Fatal("Claude weekly rejection must block the account")
+	}
+	if got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{candidate}, testNow, &cursor, defaultConfig()); !got.Reject {
+		t.Fatalf("exhausted Claude account used as fallback: %#v", got)
 	}
 }
 

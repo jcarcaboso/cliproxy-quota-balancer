@@ -22,6 +22,8 @@ type quotaWindow struct {
 func pickQuotaAuth(candidates []pluginapi.SchedulerAuthCandidate, now time.Time, cursor *atomic.Uint64, cfg pluginConfig) pluginapi.SchedulerPickResponse {
 	var selected string
 	var earliest time.Time
+	var fallback string
+	var fallbackReset time.Time
 	var unknown []string
 	for _, candidate := range candidates {
 		windows, exhausted := candidateWindows(candidate, now)
@@ -37,13 +39,15 @@ func pickQuotaAuth(candidates []pluginapi.SchedulerAuthCandidate, now time.Time,
 		for _, window := range windows {
 			if window.used >= 100-cfg.ReservePercent && window.reset.Sub(now) > cfg.releaseWithin {
 				reserved = true
-				break
 			}
 			if reset.IsZero() || window.reset.Before(reset) {
 				reset = window.reset
 			}
 		}
 		if reserved {
+			if fallback == "" || reset.Before(fallbackReset) || (reset.Equal(fallbackReset) && candidate.ID < fallback) {
+				fallback, fallbackReset = candidate.ID, reset
+			}
 			continue
 		}
 		if selected == "" || reset.Before(earliest) || (reset.Equal(earliest) && candidate.ID < selected) {
@@ -58,11 +62,14 @@ func pickQuotaAuth(candidates []pluginapi.SchedulerAuthCandidate, now time.Time,
 		index := (cursor.Add(1) - 1) % uint64(len(unknown))
 		return pluginapi.SchedulerPickResponse{Handled: true, AuthID: unknown[index]}
 	}
+	if fallback != "" {
+		return pluginapi.SchedulerPickResponse{Handled: true, AuthID: fallback}
+	}
 	return pluginapi.SchedulerPickResponse{
 		Handled:      true,
 		Reject:       true,
 		RejectCode:   "auth_unavailable",
-		RejectReason: "all candidate accounts are exhausted or preserving their quota reserve",
+		RejectReason: "no candidate accounts with usable quota",
 	}
 }
 

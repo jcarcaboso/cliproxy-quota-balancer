@@ -49,10 +49,11 @@ func verify(directory string) error {
 	}
 	now := time.Now()
 	account := func(id, used string, reset time.Duration, weeklyUsed string, weeklyReset time.Duration) pluginapi.SchedulerAuthCandidate {
-		headers := http.Header{
-			"X-Codex-Primary-Used-Percent":   []string{used},
-			"X-Codex-Primary-Window-Minutes": []string{"300"},
-			"X-Codex-Primary-Reset-At":       []string{strconv.FormatInt(now.Add(reset).Unix(), 10)},
+		headers := make(http.Header)
+		if used != "" {
+			headers.Set("X-Codex-Primary-Used-Percent", used)
+			headers.Set("X-Codex-Primary-Window-Minutes", "300")
+			headers.Set("X-Codex-Primary-Reset-At", strconv.FormatInt(now.Add(reset).Unix(), 10))
 		}
 		if weeklyUsed != "" {
 			headers.Set("X-Codex-Secondary-Used-Percent", weeklyUsed)
@@ -99,7 +100,19 @@ func verify(directory string) error {
 		{"weekly exhaustion excluded", []pluginapi.SchedulerAuthCandidate{
 			account("empty", "50", 30*time.Minute, "100", 24*time.Hour), available,
 		}, "available", false},
-		{"all reserved pool rejected", []pluginapi.SchedulerAuthCandidate{account("held", "95", 2*time.Hour, "", 0)}, "", true},
+		{"single reserved account remains usable", []pluginapi.SchedulerAuthCandidate{account("held", "95", 2*time.Hour, "", 0)}, "held", false},
+		{"all reserved pool uses earliest reset", []pluginapi.SchedulerAuthCandidate{
+			account("weekly-only", "", 0, "95", 24*time.Hour),
+			account("five-hour", "95", 2*time.Hour, "", 0),
+		}, "five-hour", false},
+		{"exhausted five-hour account falls back to weekly-only reserve", []pluginapi.SchedulerAuthCandidate{
+			account("five-hour", "100", 2*time.Hour, "", 0),
+			account("weekly-only", "", 0, "95", 24*time.Hour),
+		}, "weekly-only", false},
+		{"all exhausted pool rejected", []pluginapi.SchedulerAuthCandidate{
+			account("empty", "100", 2*time.Hour, "", 0),
+			account("weekly-empty", "", 0, "100", 24*time.Hour),
+		}, "", true},
 		{"unknown account does not spend a known reserve", []pluginapi.SchedulerAuthCandidate{
 			account("held", "95", 2*time.Hour, "", 0), {ID: "unknown", Provider: "codex"},
 		}, "unknown", false},

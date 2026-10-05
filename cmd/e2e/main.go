@@ -50,7 +50,10 @@ func run(server, plugins string) error {
 		{"weekly reset wins", accountQuota{50, 95, 3 * time.Hour, 15 * time.Minute}, accountQuota{50, 50, 30 * time.Minute, 48 * time.Hour}, "a"},
 		{"other window reserve still holds", accountQuota{95, 95, 3 * time.Hour, 15 * time.Minute}, available, "b"},
 		{"weekly exhaustion excluded", accountQuota{50, 100, 30 * time.Minute, 24 * time.Hour}, available, "b"},
-		{"all reserved pool rejects without upstream request", accountQuota{95, 50, 2 * time.Hour, 48 * time.Hour}, accountQuota{95, 50, 3 * time.Hour, 48 * time.Hour}, ""},
+		{"all reserved pool uses earliest reset", accountQuota{95, 50, 2 * time.Hour, 48 * time.Hour}, accountQuota{95, 50, 3 * time.Hour, 48 * time.Hour}, "a"},
+		{"reserved five-hour account precedes weekly-only account", accountQuota{95, -1, 2 * time.Hour, 0}, accountQuota{-1, 95, 0, 24 * time.Hour}, "a"},
+		{"exhausted five-hour account falls back to weekly-only reserve", accountQuota{100, -1, 2 * time.Hour, 0}, accountQuota{-1, 95, 0, 24 * time.Hour}, "b"},
+		{"all exhausted pool rejects without upstream request", accountQuota{100, 50, 2 * time.Hour, 48 * time.Hour}, accountQuota{-1, 100, 0, 24 * time.Hour}, ""},
 	}
 	for _, test := range tests {
 		for _, affinity := range []bool{false, true} {
@@ -81,6 +84,9 @@ func scenario(server, plugins string, a, b accountQuota, want string, affinity b
 			minutes, used int
 			reset         time.Duration
 		}{{"Primary", 300, quota.shortUsed, quota.shortReset}, {"Secondary", 10080, quota.weeklyUsed, quota.weeklyReset}} {
+			if window.used < 0 {
+				continue // A negative fixture utilization means this limit is absent.
+			}
 			prefix := "X-Codex-" + window.name + "-"
 			w.Header().Set(prefix+"Used-Percent", strconv.Itoa(window.used))
 			w.Header().Set(prefix+"Window-Minutes", strconv.Itoa(window.minutes))

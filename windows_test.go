@@ -63,6 +63,20 @@ func TestWeeklyAndFiveHourResetOrdering(t *testing.T) {
 				codexCandidate("available", "40", 30*time.Minute),
 			}, "refreshed",
 		},
+		{
+			"reserved fallback still compares weekly and five-hour resets",
+			[]pluginapi.SchedulerAuthCandidate{
+				withWeekly(codexCandidate("weekly", "95", 3*time.Hour), "95", 2*time.Hour),
+				codexCandidate("five-hour", "95", 4*time.Hour),
+			}, "weekly",
+		},
+		{
+			"reserved fallback includes urgent reset from another window",
+			[]pluginapi.SchedulerAuthCandidate{
+				withWeekly(codexCandidate("weekly", "95", 3*time.Hour), "95", 15*time.Minute),
+				codexCandidate("five-hour", "95", 2*time.Hour),
+			}, "weekly",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,23 +119,25 @@ func TestConfigurableThresholds(t *testing.T) {
 		release time.Duration
 		used    string
 		until   time.Duration
-		reject  bool
+		want    string
 	}{
-		{20, 30 * time.Minute, "80", 31 * time.Minute, true},
-		{20, 30 * time.Minute, "80", 30 * time.Minute, false},
-		{20, 30 * time.Minute, "79.99", time.Hour, false},
-		{5, 2 * time.Hour, "95", 3 * time.Hour, true},
-		{5, 2 * time.Hour, "95", 2 * time.Hour, false},
-		{0, 0, "99", 3 * time.Hour, false},
-		{0, 0, "100", time.Minute, true},
-		{10, 0, "90", time.Second, true},
+		{20, 30 * time.Minute, "80", 31 * time.Minute, "available"},
+		{20, 30 * time.Minute, "80", 30 * time.Minute, "account"},
+		{20, 30 * time.Minute, "79.99", time.Hour, "account"},
+		{5, 2 * time.Hour, "95", 3 * time.Hour, "available"},
+		{5, 2 * time.Hour, "95", 2 * time.Hour, "account"},
+		{0, 0, "99", 3 * time.Hour, "account"},
+		{0, 0, "100", time.Minute, "available"},
+		{10, 0, "90", time.Second, "available"},
 	}
 	for _, tt := range tests {
 		cfg := defaultConfig()
 		cfg.ReservePercent, cfg.releaseWithin = tt.reserve, tt.release
 		var cursor atomic.Uint64
-		got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{codexCandidate("account", tt.used, tt.until)}, testNow, &cursor, cfg)
-		if got.Reject != tt.reject {
+		got := pickQuotaAuth([]pluginapi.SchedulerAuthCandidate{
+			codexCandidate("account", tt.used, tt.until), codexCandidate("available", "50", 4*time.Hour),
+		}, testNow, &cursor, cfg)
+		if got.Reject || got.AuthID != tt.want {
 			t.Fatalf("reserve=%v release=%v used=%s until=%v pick=%#v", tt.reserve, tt.release, tt.used, tt.until, got)
 		}
 	}
@@ -179,8 +195,9 @@ func TestRandomPoolsMatchPolicyOracle(t *testing.T) {
 		cfg.ReservePercent = float64(rng.IntN(31))
 		cfg.releaseWithin = time.Duration(rng.IntN(121)) * time.Minute
 		type ranked struct {
-			id    string
-			reset time.Time
+			id       string
+			reset    time.Time
+			reserved bool
 		}
 		var eligible []ranked
 		var candidates []pluginapi.SchedulerAuthCandidate
@@ -190,14 +207,20 @@ func TestRandomPoolsMatchPolicyOracle(t *testing.T) {
 			shortTime := time.Duration(1+rng.IntN(300)) * time.Minute
 			weeklyTime := time.Duration(1+rng.IntN(10080)) * time.Minute
 			candidates = append(candidates, withWeekly(codexCandidate(id, strconv.Itoa(shortUsed), shortTime), strconv.Itoa(weeklyUsed), weeklyTime))
-			blocked := shortUsed == 100 || weeklyUsed == 100 ||
-				(float64(shortUsed) >= 100-cfg.ReservePercent && shortTime > cfg.releaseWithin) ||
-				(float64(weeklyUsed) >= 100-cfg.ReservePercent && weeklyTime > cfg.releaseWithin)
-			if !blocked {
-				eligible = append(eligible, ranked{id: id, reset: testNow.Add(min(shortTime, weeklyTime))})
+			if shortUsed == 100 || weeklyUsed == 100 {
+				continue
 			}
+			reserved := (float64(shortUsed) >= 100-cfg.ReservePercent && shortTime > cfg.releaseWithin) ||
+				(float64(weeklyUsed) >= 100-cfg.ReservePercent && weeklyTime > cfg.releaseWithin)
+			eligible = append(eligible, ranked{id: id, reset: testNow.Add(min(shortTime, weeklyTime)), reserved: reserved})
 		}
 		slices.SortFunc(eligible, func(a, b ranked) int {
+			if a.reserved != b.reserved {
+				if a.reserved {
+					return 1
+				}
+				return -1
+			}
 			if result := a.reset.Compare(b.reset); result != 0 {
 				return result
 			}
@@ -214,7 +237,7 @@ func TestRandomPoolsMatchPolicyOracle(t *testing.T) {
 		got := pickQuotaAuth(candidates, testNow, &cursor, cfg)
 		if len(eligible) == 0 {
 			if !got.Reject {
-				t.Fatalf("iteration %d selected from a fully blocked pool: %#v", iteration, got)
+				t.Fatalf("iteration %d selected from a fully exhausted pool: %#v", iteration, got)
 			}
 		} else if got.AuthID != eligible[0].id || got.Reject {
 			t.Fatalf("iteration %d got %#v, want %s", iteration, got, eligible[0].id)

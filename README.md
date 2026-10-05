@@ -2,25 +2,31 @@
 
 A scheduler plugin for multiple Codex or Claude accounts. It selects the account
 whose usable five-hour **or weekly** window resets soonest, while preserving a
-configurable reserve in each window.
+configurable reserve in each window when other usable accounts are available.
 
 ## Policy
 
 For each account, read the active five-hour and weekly quota observations:
 
 1. Exclude an account if an observed, unexpired quota is exhausted.
-2. Exclude it if **any** window has only the reserve remaining and resets later
-   than `release-within`.
+2. Hold it in reserve if **any** window has only the reserve remaining and resets
+   later than `release-within`.
 3. Rank the remaining accounts by their earliest absolute reset timestamp,
    regardless of whether that reset belongs to a five-hour or weekly limit.
 4. Break equal reset times by account ID.
 5. If no measured account is eligible, round-robin among accounts with unknown
    quota. Never include a known reserved or exhausted account in that fallback.
-6. Reject selection when all candidates are reserved or exhausted.
+6. If neither an unreserved nor an unknown-quota account is available, use a
+   reserved account with remaining quota, ranked by earliest reset and account ID.
+7. Reject selection only when no candidates remain or all are exhausted.
 
 A weekly reset in 15 minutes beats another account's five-hour reset in 30
 minutes. It does **not** override a reserve held by the first account's other
-window. Both windows still limit how much that account can serve.
+window while another unreserved or unknown-quota account is available. If every
+account is below the reserve threshold, keep serving from the earliest-reset
+account, then switch to the next when it is exhausted. An account with only a
+weekly limit can be used after a sooner-resetting five-hour account. Exhaustion
+in either active window always excludes the account.
 
 ```yaml
 enabled: true
@@ -30,11 +36,13 @@ reserve-percent: 10
 release-within: 1h
 ```
 
-- `reserve-percent` is the percentage of each window's quota to preserve.
+- `reserve-percent` is the percentage of each window's quota to preserve while
+  alternatives are available.
   Default `10`; accepted range `0 <= value < 100`. Zero disables reservation.
 - `release-within` is the time before a window resets at which its reserve is
   released. Default `1h`. Values such as `30m` and `2h` work; `0s` keeps the
-  reserve until reset. At exactly the threshold, the reserve is released.
+  reserve until reset unless only reserved accounts remain. At exactly the
+  threshold, the reserve is released.
 - `strategy` also accepts `round-robin` or `fill-first`. Those choices delegate
   to the host and bypass this reserve policy.
 - Invalid configuration leaves the last working configuration unchanged.
@@ -77,7 +85,8 @@ make verify
 
 Tests include threshold boundaries, invalid values, weekly/five-hour comparisons,
 other-window reservation, exhausted quota, expired snapshots, unknown-data
-fallback, configuration backup/idempotence, and 5,000 seeded random account pools
+fallback, last-resort reserve use and failover, configuration backup/idempotence,
+and 5,000 seeded random account pools
 checked against an independent policy oracle.
 
 `make verify` loads the compiled `.so` through the real CLIProxyAPI host. It
@@ -90,7 +99,8 @@ The container also runs real `/v1/responses` HTTP requests, both streaming and
 non-streaming, against a local fake Codex upstream. It seeds two accounts with
 different observed quotas and checks which credential actually reaches the
 upstream. This covers the full proxy-to-plugin path, weekly versus five-hour
-ordering, reserve release, exhaustion, and rejection without upstream traffic.
+ordering, reserve release and fallback, exhaustion, and rejection without
+upstream traffic.
 
 ## Install the plugin
 
@@ -141,6 +151,21 @@ Tags `v*` trigger a release. After native/container verification, the workflow
 publishes a versioned Docker Hub image and a GitHub plugin archive with SHA256
 checksums. Publishing requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
 repository secrets. Production deployments should pin the resulting image digest.
+
+## Homelab deployment
+
+The live proxy is on `apps-mrb-01` (`apps-mrb-01.home.arpa`), served at
+`https://cliproxy.mlab.alpetxino.com`. Its deployment declaration lives in the
+homelab repository at
+`/home/ops/projects/infra/nodes/homelab/services/apps-mrb-01_cliproxy-api`.
+See that service's `README.md` for the current rollout and rollback procedure.
+
+For a release, update both image references in its `compose.yml` to the published
+version **and digest**, then deploy only `cliproxy-api`. Keep the existing
+`cliproxy-api_{config-data,auth-data,logs,static}` volumes and the tracked
+`quota-balancer.yaml` policy. Verify the HTTPS root health endpoint and the
+quota-balancer version in the container's plugin-registration logs. Do not
+export live configuration, OAuth credentials, or management keys for validation.
 
 ## License
 
